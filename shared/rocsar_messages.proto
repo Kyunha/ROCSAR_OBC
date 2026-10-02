@@ -1,0 +1,110 @@
+syntax = "proto3";
+
+package rocsar;
+
+// ============================================================================
+// 1. ESTRUTURA DE COMANDOS (GS -> OBC)
+// ============================================================================
+
+enum CommandType {
+  CMD_UNKNOWN = 0;
+  CMD_SET_TARGET = 1;
+  CMD_SET_BANDWIDTH = 2;
+  CMD_CONTROL_HEATER = 3;
+  CMD_TRIGGER_SAR = 4;
+  CMD_TRIGGER_CAMERA = 5;
+  CMD_JOG_SERVO = 6;
+}
+
+message SetTargetPayload {
+  float target_heading = 1; // Direção alvo em graus (0.0 a 360.0)
+}
+
+message SetBandwidthPayload {
+  uint32 rate_kbps = 1;     // Limite de taxa em kbps (0 = sem limite)
+}
+
+message ControlHeaterPayload {
+  uint32 heater_id = 1;     // ID do aquecedor (1 ou 2)
+  bool enable = 2;          // true = Ligar, false = Desligar
+}
+
+message TriggerCameraPayload {
+  uint32 count = 1;         // Quantidade de fotos
+  float spacing_ms = 2;     // Intervalo entre fotos em milissegundos
+}
+
+message JogServoPayload {
+  uint32 servo_id = 1;      // ID do servo (1 ou 2)
+  uint32 target_tick = 2;   // Posição direta do encoder (0 a 4095)
+}
+
+message CommandRequest {
+  string command_id = 1;    // Identificador do comando (ex: timestamp ou UUID)
+  CommandType type = 2;     // Tipo de comando a ser executado
+
+  // O bloco 'oneof' garante que apenas um payload é enviado por mensagem
+  oneof payload {
+    SetTargetPayload set_target = 3;
+    SetBandwidthPayload set_bandwidth = 4;
+    ControlHeaterPayload control_heater = 5;
+    TriggerCameraPayload trigger_camera = 6;
+    JogServoPayload jog_servo = 7;
+  }
+}
+
+// ============================================================================
+// 2. RESPOSTA DE COMANDOS (OBC -> GS)
+// ============================================================================
+
+message CommandResponse {
+  string command_id = 1;    // ID correspondente ao CommandRequest recebido
+  bool success = 2;         // true se executado sem erros, false se falhou
+  string message = 3;       // Detalhes da execução ou mensagem de erro
+}
+
+// ============================================================================
+// 3. TELEMETRIA DO SISTEMA (OBC -> GS via PUB/SUB)
+// ============================================================================
+
+message ServoData {
+  uint32 id = 1;            // ID do servo (1 ou 2)
+  uint32 current_tick = 2;  // Posição atual do encoder (0 a 4095)
+  int32 current_speed = 3;  // Velocidade atual
+  int32 current_load = 4;   // Carga/Torque atual
+  float voltage_v = 5;      // Tensão de alimentação (Volts)
+  uint32 temperature_c = 6; // Temperatura do motor (°C)
+  bool online = 7;          // Estado de comunicação com o servo
+}
+
+message GnssData {
+  double latitude = 1;      // Latitude em graus decimais
+  double longitude = 2;     // Longitude em graus decimais
+  float altitude = 3;       // Altitude em metros
+  bool fix_ok = 4;          // Estado de fixação dos receptores GNSS
+}
+
+message SystemHealth {
+  float cpu_temp_c = 1;       // Temperatura da CPU do Pi4B (°C)
+  uint64 uptime_seconds = 2;  // Tempo de execução do OBC em segundos
+  bool limit_active = 3;      // Estado da limitação de banda via 'tc'
+  float disk_used_percent = 4;// Uso do SSD em percentagem
+}
+
+message TelemetryFrame {
+  double timestamp = 1;             // Timestamp UNIX do OBC
+
+  // Dados do Subsistema de Controlo (Pico & BNO055)
+  float gondola_heading = 2;       // Orientação atual da gôndola em graus
+  float target_heading = 3;        // Alvo de orientação atualmente ativo
+  bool imu_online = 4;             // Estado do sensor BNO055
+
+  // Dados dos Atuadores e Aquecimento
+  repeated ServoData servos = 5;   // Lista com a telemetria dos 2 servos
+  bool heater1_active = 6;         // Estado do Aquecedor 1
+  bool heater2_active = 7;         // Estado do Aquecedor 2
+
+  // Navegação e Saúde do OBC
+  GnssData gnss = 8;
+  SystemHealth health = 9;
+}

@@ -1,0 +1,1242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SAR / B210 Implementation</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;500&display=swap');
+
+  :root {
+    --bg:        #0d1117;
+    --surface:   #161b22;
+    --border:    #21262d;
+    --accent:    #58a6ff;
+    --accent2:   #3fb950;
+    --warn:      #d29922;
+    --muted:     #8b949e;
+    --text:      #e6edf3;
+    --tx-color:  #f78166;
+    --rx-color:  #58a6ff;
+    --gpio-color:#3fb950;
+    --cfg-color: #d2a8ff;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-weight: 300;
+    line-height: 1.7;
+    font-size: 15px;
+  }
+
+  /* ── Header ── */
+  header {
+    border-bottom: 1px solid var(--border);
+    padding: 2.5rem 3rem 2rem;
+    display: flex;
+    align-items: flex-end;
+    gap: 2rem;
+    position: sticky;
+    top: 0;
+    background: var(--bg);
+    z-index: 100;
+  }
+
+  header h1 {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--accent);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  header p {
+    font-size: 0.8rem;
+    color: var(--muted);
+    font-family: 'IBM Plex Mono', monospace;
+  }
+
+  .badge {
+    margin-left: auto;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.7rem;
+    padding: 0.2rem 0.6rem;
+    border-radius: 2px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--muted);
+  }
+
+  /* ── Layout ── */
+  .layout {
+    display: grid;
+    grid-template-columns: 220px 1fr;
+    min-height: calc(100vh - 85px);
+  }
+
+  /* ── Sidebar ── */
+  nav {
+    border-right: 1px solid var(--border);
+    padding: 2rem 0;
+    position: sticky;
+    top: 85px;
+    height: calc(100vh - 85px);
+    overflow-y: auto;
+  }
+
+  nav .nav-group {
+    margin-bottom: 1.5rem;
+  }
+
+  nav .nav-label {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.65rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    padding: 0 1.5rem 0.5rem;
+    display: block;
+  }
+
+  nav a {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.35rem 1.5rem;
+    font-size: 0.82rem;
+    color: var(--muted);
+    text-decoration: none;
+    border-left: 2px solid transparent;
+    transition: all 0.15s;
+  }
+
+  nav a:hover, nav a.active {
+    color: var(--text);
+    border-left-color: var(--accent);
+    background: rgba(88,166,255,0.06);
+  }
+
+  nav a .dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  /* ── Main ── */
+  main {
+    padding: 3rem 4rem;
+    max-width: 960px;
+  }
+
+  section {
+    margin-bottom: 4rem;
+    scroll-margin-top: 100px;
+  }
+
+  h2 {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--muted);
+    margin-bottom: 1rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  h3 {
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 1.25rem;
+    font-weight: 500;
+    color: var(--text);
+    margin-bottom: 0.75rem;
+  }
+
+  p { color: #c9d1d9; margin-bottom: 0.75rem; }
+
+  /* ── Architecture diagram ── */
+  .arch {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 2rem;
+    margin: 1.5rem 0;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.75rem;
+  }
+
+  .arch-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 0.4rem 0;
+  }
+
+  .arch-box {
+    padding: 0.3rem 0.75rem;
+    border-radius: 2px;
+    border: 1px solid;
+    white-space: nowrap;
+    font-size: 0.72rem;
+  }
+
+  .arch-arrow { color: var(--muted); font-size: 0.9rem; }
+
+  /* ── File tree ── */
+  .filetree {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1.25rem 1.5rem;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.78rem;
+    line-height: 1.9;
+    margin: 1.5rem 0;
+  }
+
+  .filetree .dir  { color: var(--accent); }
+  .filetree .file { color: var(--text); }
+  .filetree .desc { color: var(--muted); font-size: 0.7rem; margin-left: 1rem; }
+
+  /* ── Code blocks ── */
+  .code-block {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+    margin: 1.25rem 0;
+  }
+
+  .code-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.5rem 1rem;
+    border-bottom: 1px solid var(--border);
+    background: rgba(255,255,255,0.02);
+  }
+
+  .code-filename {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.7rem;
+    color: var(--muted);
+  }
+
+  .copy-btn {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.65rem;
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    padding: 0.2rem 0.6rem;
+    border-radius: 2px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .copy-btn:hover { color: var(--text); border-color: var(--accent); }
+  .copy-btn.copied { color: var(--accent2); border-color: var(--accent2); }
+
+  pre {
+    padding: 1.25rem 1.5rem;
+    overflow-x: auto;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.75rem;
+    line-height: 1.7;
+  }
+
+  .kw  { color: #ff7b72; }
+  .ty  { color: #ffa657; }
+  .str { color: #a5d6ff; }
+  .cmt { color: #8b949e; font-style: italic; }
+  .fn  { color: #d2a8ff; }
+  .num { color: #79c0ff; }
+  .mac { color: #3fb950; }
+
+  /* ── Tabs ── */
+  .tabs { margin: 1.5rem 0; }
+
+  .tab-btns {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 0;
+  }
+
+  .tab-btn {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.72rem;
+    padding: 0.5rem 1.2rem;
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--muted);
+    cursor: pointer;
+    transition: all 0.15s;
+    margin-bottom: -1px;
+  }
+
+  .tab-btn.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+  }
+
+  .tab-pane { display: none; }
+  .tab-pane.active { display: block; }
+
+  /* ── Callouts ── */
+  .callout {
+    border-left: 3px solid;
+    padding: 0.75rem 1rem;
+    margin: 1.25rem 0;
+    border-radius: 0 4px 4px 0;
+    font-size: 0.85rem;
+  }
+
+  .callout.info  { border-color: var(--accent);  background: rgba(88,166,255,0.07); }
+  .callout.warn  { border-color: var(--warn);    background: rgba(210,153,34,0.07); }
+  .callout.ok    { border-color: var(--accent2); background: rgba(63,185,80,0.07);  }
+
+  .callout strong {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    display: block;
+    margin-bottom: 0.25rem;
+  }
+
+  .callout.info  strong { color: var(--accent);  }
+  .callout.warn  strong { color: var(--warn);    }
+  .callout.ok    strong { color: var(--accent2); }
+
+  /* ── Timeline (deploy steps) ── */
+  .timeline { margin: 1.5rem 0; }
+
+  .tl-item {
+    display: grid;
+    grid-template-columns: 2rem 1fr;
+    gap: 1rem;
+    margin-bottom: 0;
+    position: relative;
+  }
+
+  .tl-item:not(:last-child) .tl-line {
+    position: absolute;
+    left: 0.9rem;
+    top: 2rem;
+    bottom: 0;
+    width: 1px;
+    background: var(--border);
+  }
+
+  .tl-num {
+    width: 2rem; height: 2rem;
+    border-radius: 50%;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.65rem;
+    color: var(--muted);
+    flex-shrink: 0;
+    z-index: 1;
+  }
+
+  .tl-num.done  { border-color: var(--accent2); color: var(--accent2); }
+  .tl-num.active { border-color: var(--accent);  color: var(--accent);  }
+
+  .tl-content {
+    padding-bottom: 2rem;
+  }
+
+  .tl-title {
+    font-weight: 500;
+    font-size: 0.9rem;
+    margin-bottom: 0.25rem;
+  }
+
+  .tl-desc { font-size: 0.82rem; color: var(--muted); }
+
+  /* ── Param table ── */
+  .param-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.82rem;
+    margin: 1.25rem 0;
+  }
+
+  .param-table th {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    text-align: left;
+    padding: 0.5rem 1rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .param-table td {
+    padding: 0.6rem 1rem;
+    border-bottom: 1px solid rgba(33,38,45,0.8);
+    color: #c9d1d9;
+  }
+
+  .param-table tr:hover td { background: rgba(255,255,255,0.02); }
+
+  .param-table code {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.72rem;
+    color: var(--accent);
+    background: rgba(88,166,255,0.1);
+    padding: 0.1rem 0.35rem;
+    border-radius: 2px;
+  }
+
+  /* ── Pulse timing diagram ── */
+  .timing {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1.5rem;
+    margin: 1.5rem 0;
+    overflow-x: auto;
+  }
+
+  svg text { font-family: 'IBM Plex Mono', monospace; }
+
+  /* ── Checklist ── */
+  .checklist { list-style: none; margin: 1rem 0; }
+
+  .checklist li {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    padding: 0.4rem 0;
+    font-size: 0.85rem;
+    color: #c9d1d9;
+    cursor: pointer;
+  }
+
+  .checklist li .check {
+    width: 1rem; height: 1rem;
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    flex-shrink: 0;
+    margin-top: 0.15rem;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.6rem;
+    transition: all 0.15s;
+  }
+
+  .checklist li.done .check {
+    background: var(--accent2);
+    border-color: var(--accent2);
+    color: #000;
+  }
+
+  .checklist li.done span { text-decoration: line-through; color: var(--muted); }
+
+  /* ── Progress bar ── */
+  .progress-wrap { margin: 1rem 0 2rem; }
+
+  .progress-label {
+    display: flex;
+    justify-content: space-between;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.7rem;
+    color: var(--muted);
+    margin-bottom: 0.4rem;
+  }
+
+  .progress-bar {
+    height: 4px;
+    background: var(--border);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .progress-fill {
+    height: 100%;
+    background: var(--accent2);
+    border-radius: 2px;
+    transition: width 0.3s ease;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>SAR · B210 Implementation</h1>
+    <p>UHD 4.8 · C++17 · DietPi · aarch64</p>
+  </div>
+  <span class="badge">v1.0</span>
+</header>
+
+<div class="layout">
+
+  <!-- Sidebar -->
+  <nav id="sidebar">
+    <div class="nav-group">
+      <span class="nav-label">Overview</span>
+      <a href="#architecture" onclick="setActive(this)">
+        <span class="dot" style="background:#58a6ff"></span> Architecture
+      </a>
+      <a href="#files" onclick="setActive(this)">
+        <span class="dot" style="background:#58a6ff"></span> File structure
+      </a>
+      <a href="#params" onclick="setActive(this)">
+        <span class="dot" style="background:#d2a8ff"></span> Parameters
+      </a>
+    </div>
+    <div class="nav-group">
+      <span class="nav-label">Modules</span>
+      <a href="#signal" onclick="setActive(this)">
+        <span class="dot" style="background:#ffa657"></span> signal.cpp
+      </a>
+      <a href="#tx" onclick="setActive(this)">
+        <span class="dot" style="background:#f78166"></span> tx_thread
+      </a>
+      <a href="#rx" onclick="setActive(this)">
+        <span class="dot" style="background:#58a6ff"></span> rx_thread
+      </a>
+      <a href="#gpio" onclick="setActive(this)">
+        <span class="dot" style="background:#3fb950"></span> GPIO / ATR
+      </a>
+    </div>
+    <div class="nav-group">
+      <span class="nav-label">Timing</span>
+      <a href="#timing" onclick="setActive(this)">
+        <span class="dot" style="background:#d29922"></span> Pulse timing
+      </a>
+      <a href="#sync" onclick="setActive(this)">
+        <span class="dot" style="background:#d29922"></span> TX/RX sync
+      </a>
+    </div>
+    <div class="nav-group">
+      <span class="nav-label">Deploy</span>
+      <a href="#deploy" onclick="setActive(this)">
+        <span class="dot" style="background:#3fb950"></span> Step-by-step
+      </a>
+      <a href="#python" onclick="setActive(this)">
+        <span class="dot" style="background:#3fb950"></span> Data validation
+      </a>
+    </div>
+  </nav>
+
+  <!-- Main -->
+  <main>
+
+    <!-- Architecture -->
+    <section id="architecture">
+      <h2>Overview</h2>
+      <h3>System Architecture</h3>
+      <p>Monostatic SAR system running on a Ettus B210 (B200 variant) connected via USB 3.0 to a DietPi/aarch64 host. TX and RX run in parallel threads, both locked to a shared USRP time reference.</p>
+
+      <div class="arch">
+        <div class="arch-row">
+          <span class="arch-box" style="border-color:#d2a8ff;color:#d2a8ff">params.json</span>
+          <span class="arch-arrow">──▶</span>
+          <span class="arch-box" style="border-color:#d2a8ff;color:#d2a8ff">config.hpp</span>
+          <span class="arch-arrow">──▶</span>
+          <span class="arch-box" style="border-color:#e6edf3;color:#e6edf3">connect.cpp (main)</span>
+        </div>
+        <div style="margin:0.75rem 0 0.75rem 10rem; color:#8b949e">│</div>
+        <div class="arch-row" style="margin-left:10rem">
+          <span class="arch-box" style="border-color:#ffa657;color:#ffa657">signal.cpp</span>
+          <span class="arch-arrow">──▶</span>
+          <span class="arch-box" style="border-color:#f78166;color:#f78166">tx_thread ──▶ B210 DAC</span>
+        </div>
+        <div style="margin:0.4rem 0 0.4rem 10rem; color:#8b949e">│ t_start shared</div>
+        <div class="arch-row" style="margin-left:10rem">
+          <span style="width:6.5rem"></span>
+          <span class="arch-box" style="border-color:#58a6ff;color:#58a6ff">rx_thread ◀── B210 ADC</span>
+          <span class="arch-arrow">──▶</span>
+          <span class="arch-box" style="border-color:#58a6ff;color:#58a6ff">rx_data_TIMESTAMP.bin</span>
+        </div>
+        <div style="margin:0.75rem 0 0.25rem 10rem; color:#8b949e">│</div>
+        <div class="arch-row" style="margin-left:10rem">
+          <span class="arch-box" style="border-color:#3fb950;color:#3fb950">ATR GPIO FP0 pin0 ── TX envelope</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- File structure -->
+    <section id="files">
+      <h2>Structure</h2>
+      <h3>File Structure</h3>
+      <div class="filetree">
+        <div><span class="dir">sdr-ettus-b200mini/</span></div>
+        <div>├── <span class="file">connect.cpp</span> <span class="desc">// entry point, USRP init, thread launch</span></div>
+        <div>├── <span class="file">makefile</span></div>
+        <div>├── <span class="file">build.sh</span></div>
+        <div>├── <span class="dir">parameters/</span></div>
+        <div>│   ├── <span class="file">params.json</span> <span class="desc">// all tunable parameters</span></div>
+        <div>│   └── <span class="file">config.hpp</span> <span class="desc">// JSON parser → Config struct</span></div>
+        <div>└── <span class="dir">libs/</span></div>
+        <div>    ├── <span class="dir">signal/</span></div>
+        <div>    │   ├── <span class="file">signal.hpp</span> <span class="desc">// extern SIGNAL_TX declaration</span></div>
+        <div>    │   └── <span class="file">signal.cpp</span> <span class="desc">// LFM chirp generation</span></div>
+        <div>    ├── <span class="dir">tx/</span></div>
+        <div>    │   └── <span class="file">tx_thread.hpp</span> <span class="desc">// timed pulse burst loop</span></div>
+        <div>    └── <span class="dir">rx/</span></div>
+        <div>        └── <span class="file">rx_thread.hpp</span> <span class="desc">// windowed capture → memory → file</span></div>
+      </div>
+    </section>
+
+    <!-- Parameters -->
+    <section id="params">
+      <h2>Config</h2>
+      <h3>Parameters — <code style="font-size:0.85rem;color:#d2a8ff">params.json</code></h3>
+
+      <table class="param-table">
+        <thead>
+          <tr>
+            <th>Key</th>
+            <th>Default</th>
+            <th>Unit</th>
+            <th>Description</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td><code>PRF</code></td><td>2750.0</td><td>Hz</td><td>Pulse repetition frequency</td></tr>
+          <tr><td><code>FS</code></td><td>10e6</td><td>sps</td><td>Sample rate TX and RX</td></tr>
+          <tr><td><code>SESSION_DURATION</code></td><td>25.0</td><td>s</td><td>Total recording session</td></tr>
+          <tr><td><code>TX_FREQ</code></td><td>2.4e9</td><td>Hz</td><td>Carrier frequency (monostatic)</td></tr>
+          <tr><td><code>NORMALIZED_GAIN</code></td><td>0.7</td><td>—</td><td>TX gain [0.0 – 1.0]</td></tr>
+          <tr><td><code>T_MIN_US</code></td><td>10.0</td><td>µs</td><td>Start of RX window after TX</td></tr>
+          <tr><td><code>T_MAX_US</code></td><td>100.0</td><td>µs</td><td>End of RX window after TX</td></tr>
+          <tr><td><code>START_OFFSET_S</code></td><td>0.1</td><td>s</td><td>Arm time before first pulse</td></tr>
+        </tbody>
+      </table>
+
+      <div class="callout warn">
+        <strong>Important</strong>
+        <code>FS</code> in <code>params.json</code> and <code>SAMPLE_RATE</code> in <code>signal.cpp</code> must match. If they diverge the pulse will be stretched or compressed in the RX window.
+      </div>
+
+      <div class="code-block">
+        <div class="code-header">
+          <span class="code-filename">parameters/params.json</span>
+          <button class="copy-btn" onclick="copyCode(this)">copy</button>
+        </div>
+        <pre>{
+    <span class="str">"PRF"</span>:              <span class="num">2750.0</span>,
+    <span class="str">"FS"</span>:               <span class="num">50e6</span>,
+    <span class="str">"SESSION_DURATION"</span>: <span class="num">25.0</span>,
+    <span class="str">"TX_FREQ"</span>:          <span class="num">5.8e9</span>,
+    <span class="str">"NORMALIZED_GAIN"</span>:  <span class="num">0.7</span>,
+    <span class="str">"T_MIN_US"</span>:         <span class="num">40.0</span>,
+    <span class="str">"T_MAX_US"</span>:         <span class="num">320.0</span>,
+    <span class="str">"START_OFFSET_S"</span>:   <span class="num">0.1</span>
+}</pre>
+      </div>
+    </section>
+
+    <!-- Signal -->
+    <section id="signal">
+      <h2>Module</h2>
+      <h3>Signal Generation — LFM Chirp</h3>
+      <p>A linear frequency-modulated (LFM) chirp is generated at startup as a <code style="color:#ffa657">std::vector&lt;std::complex&lt;int16_t&gt;&gt;</code>. Samples are scaled to INT16_MAX for sc16 OTW format.</p>
+
+      <div class="callout info">
+        <strong>Why LFM?</strong>
+        LFM chirps give SAR systems large time-bandwidth product — long pulse duration (energy) with wide bandwidth (range resolution). The matched filter (pulse compression) collapses the chirp to a sharp range peak.
+      </div>
+
+      <div class="code-block">
+        <div class="code-header">
+          <span class="code-filename">libs/signal/signal.cpp</span>
+          <button class="copy-btn" onclick="copyCode(this)">copy</button>
+        </div>
+        <pre><span class="kw">static constexpr</span> <span class="ty">double</span> SAMPLE_RATE    = <span class="num">10e6</span>;
+<span class="kw">static constexpr</span> <span class="ty">double</span> PULSE_DURATION = <span class="num">10e-6</span>;  <span class="cmt">// 10 µs</span>
+<span class="kw">static constexpr</span> <span class="ty">double</span> BW             = <span class="num">5e6</span>;    <span class="cmt">// 5 MHz bandwidth</span>
+<span class="kw">static constexpr</span> <span class="ty">double</span> F0             = -BW / <span class="num">2</span>;
+
+<span class="kw">const</span> std::vector&lt;std::complex&lt;<span class="ty">int16_t</span>&gt;&gt; SIGNAL_TX = []()
+{
+    <span class="kw">const</span> <span class="ty">size_t</span> N = <span class="kw">static_cast</span>&lt;<span class="ty">size_t</span>&gt;(SAMPLE_RATE * PULSE_DURATION);
+    std::vector&lt;std::complex&lt;<span class="ty">int16_t</span>&gt;&gt; sig(N);
+    <span class="kw">const</span> <span class="ty">double</span> k = BW / PULSE_DURATION; <span class="cmt">// chirp rate</span>
+
+    <span class="kw">for</span> (<span class="ty">size_t</span> i = <span class="num">0</span>; i &lt; N; ++i) {
+        <span class="ty">double</span> t     = i / SAMPLE_RATE;
+        <span class="ty">double</span> phase = <span class="num">2.0</span> * M_PI * (F0 * t + <span class="num">0.5</span> * k * t * t);
+        sig[i] = std::complex&lt;<span class="ty">int16_t</span>&gt;(
+            <span class="kw">static_cast</span>&lt;<span class="ty">int16_t</span>&gt;(std::<span class="fn">cos</span>(phase) * <span class="num">32767</span>),
+            <span class="kw">static_cast</span>&lt;<span class="ty">int16_t</span>&gt;(std::<span class="fn">sin</span>(phase) * <span class="num">32767</span>)
+        );
+    }
+    <span class="kw">return</span> sig;
+}();</pre>
+      </div>
+    </section>
+
+    <!-- TX -->
+    <section id="tx">
+      <h2>Module</h2>
+      <h3>TX Thread</h3>
+      <p>Each pulse is explicitly time-stamped using <code style="color:#f78166">md.time_spec</code>. The next pulse time is computed by incrementing <code>t_next</code> by the PRI — this is deterministic and immune to thread scheduling jitter.</p>
+
+      <div class="tabs">
+        <div class="tab-btns">
+          <button class="tab-btn active" onclick="switchTab(this,'tx-sig')">Signature</button>
+          <button class="tab-btn" onclick="switchTab(this,'tx-loop')">Pulse loop</button>
+          <button class="tab-btn" onclick="switchTab(this,'tx-notes')">Design notes</button>
+        </div>
+        <div id="tx-sig" class="tab-pane active">
+          <div class="code-block">
+            <div class="code-header">
+              <span class="code-filename">libs/tx/tx_thread.hpp — signature</span>
+              <button class="copy-btn" onclick="copyCode(this)">copy</button>
+            </div>
+            <pre><span class="kw">void</span> <span class="fn">tx_thread_func</span>(
+    uhd::usrp::multi_usrp::sptr  usrp,
+    <span class="ty">double</span>                       prf,
+    <span class="ty">double</span>                       session_dur,
+    <span class="ty">double</span>                       fs,
+    uhd::time_spec_t             t_start,   <span class="cmt">// shared with RX</span>
+    std::atomic&lt;<span class="ty">bool</span>&gt;&amp;           stop_flag
+)</pre>
+          </div>
+        </div>
+        <div id="tx-loop" class="tab-pane">
+          <div class="code-block">
+            <div class="code-header">
+              <span class="code-filename">libs/tx/tx_thread.hpp — pulse loop</span>
+              <button class="copy-btn" onclick="copyCode(this)">copy</button>
+            </div>
+            <pre><span class="kw">for</span> (<span class="ty">size_t</span> pulse = <span class="num">0</span>; pulse &lt; total_pulses &amp;&amp; !stop_flag; ++pulse)
+{
+    md.time_spec      = t_next;
+    md.start_of_burst = (pulse == <span class="num">0</span>);
+    md.end_of_burst   = (pulse == total_pulses - <span class="num">1</span>);
+
+    <span class="kw">const</span> <span class="ty">size_t</span> sent = tx_stream-&gt;<span class="fn">send</span>(
+        SIGNAL_TX.<span class="fn">data</span>(),
+        SIGNAL_TX.<span class="fn">size</span>(),
+        md,
+        <span class="num">2.0</span>   <span class="cmt">// timeout [s]</span>
+    );
+
+    t_next += uhd::<span class="fn">time_spec_t</span>(pri); <span class="cmt">// deterministic, no jitter</span>
+    md.start_of_burst = <span class="kw">false</span>;
+    md.has_time_spec  = <span class="kw">true</span>;
+}</pre>
+          </div>
+        </div>
+        <div id="tx-notes" class="tab-pane">
+          <div class="callout info">
+            <strong>Explicit timestamps per pulse</strong>
+            Every pulse carries its own <code>time_spec</code>. The USRP holds samples in its FIFO and releases them at exactly the right clock tick — not when the CPU delivers them.
+          </div>
+          <div class="callout ok">
+            <strong>sc16 OTW format</strong>
+            SIGNAL_TX is <code>int16_t</code> scaled to ±32767. Travelling over USB as sc16 halves bandwidth vs fc32. The B210 DAC receives native 12-bit values — UHD truncates the bottom 4 bits.
+          </div>
+          <div class="callout warn">
+            <strong>Watch for [U] underruns</strong>
+            If you see <code>[U]</code> in the terminal the CPU is not feeding samples fast enough. Lower PRF or reduce FS temporarily to diagnose.
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- RX -->
+    <section id="rx">
+      <h2>Module</h2>
+      <h3>RX Thread</h3>
+      <p>The full session buffer is allocated upfront. No file I/O occurs during capture — writing happens only after all pulses are received. This prevents disk latency from causing overflows.</p>
+
+      <div class="tabs">
+        <div class="tab-btns">
+          <button class="tab-btn active" onclick="switchTab(this,'rx-alloc')">Memory alloc</button>
+          <button class="tab-btn" onclick="switchTab(this,'rx-loop')">Receive loop</button>
+          <button class="tab-btn" onclick="switchTab(this,'rx-write')">File write</button>
+        </div>
+        <div id="rx-alloc" class="tab-pane active">
+          <div class="code-block">
+            <div class="code-header">
+              <span class="code-filename">libs/rx/rx_thread.hpp — buffer allocation</span>
+              <button class="copy-btn" onclick="copyCode(this)">copy</button>
+            </div>
+            <pre><span class="kw">const</span> <span class="ty">size_t</span> window_samps = <span class="kw">static_cast</span>&lt;<span class="ty">size_t</span>&gt;(window_dur * fs);
+<span class="kw">const</span> <span class="ty">size_t</span> total_pulses  = <span class="kw">static_cast</span>&lt;<span class="ty">size_t</span>&gt;(session_dur * prf);
+<span class="kw">const</span> <span class="ty">size_t</span> total_samps   = total_pulses * window_samps;
+
+<span class="cmt">// Allocate entire session upfront — fail early if OOM</span>
+std::vector&lt;std::complex&lt;<span class="ty">int16_t</span>&gt;&gt; buffer;
+<span class="kw">try</span> {
+    buffer.<span class="fn">resize</span>(total_samps);
+} <span class="kw">catch</span> (<span class="kw">const</span> std::bad_alloc&amp; e) {
+    <span class="kw">throw</span> std::<span class="fn">runtime_error</span>(<span class="str">"[RX] Not enough memory: "</span>
+                             + std::<span class="fn">string</span>(e.<span class="fn">what</span>()));
+}</pre>
+          </div>
+        </div>
+        <div id="rx-loop" class="tab-pane">
+          <div class="code-block">
+            <div class="code-header">
+              <span class="code-filename">libs/rx/rx_thread.hpp — receive loop</span>
+              <button class="copy-btn" onclick="copyCode(this)">copy</button>
+            </div>
+            <pre><span class="kw">for</span> (<span class="ty">size_t</span> pulse = <span class="num">0</span>; pulse &lt; total_pulses &amp;&amp; !stop_flag; ++pulse)
+{
+    <span class="cmt">// RX window = TX pulse time + t_min</span>
+    uhd::time_spec_t t_pulse = t_start + uhd::<span class="fn">time_spec_t</span>(pulse * pri);
+    uhd::time_spec_t t_rx    = t_pulse + uhd::<span class="fn">time_spec_t</span>(t_min_s);
+
+    uhd::stream_cmd_t cmd(uhd::stream_cmd_t::STREAM_MODE_NUM_SAMPS_AND_DONE);
+    cmd.num_samps  = window_samps;
+    cmd.stream_now = <span class="kw">false</span>;
+    cmd.time_spec  = t_rx;
+    rx_stream-&gt;<span class="fn">issue_stream_cmd</span>(cmd);
+
+    <span class="cmt">// Write directly into the session buffer at the right offset</span>
+    std::complex&lt;<span class="ty">int16_t</span>&gt;* pulse_ptr = buffer.<span class="fn">data</span>() + pulse * window_samps;
+    <span class="cmt">// ... recv() loop into pulse_ptr ...</span>
+}</pre>
+          </div>
+        </div>
+        <div id="rx-write" class="tab-pane">
+          <div class="code-block">
+            <div class="code-header">
+              <span class="code-filename">libs/rx/rx_thread.hpp — file write (post-capture)</span>
+              <button class="copy-btn" onclick="copyCode(this)">copy</button>
+            </div>
+            <pre"><span class="cmt">// All pulses captured — now write</span>
+std::string filename = std::<span class="fn">string</span>(<span class="str">"rx_data_"</span>) + timestamp + <span class="str">".bin"</span>;
+std::ofstream <span class="fn">outfile</span>(filename, std::ios::binary | std::ios::trunc);
+
+outfile.<span class="fn">write</span>(
+    <span class="kw">reinterpret_cast</span>&lt;<span class="kw">const</span> <span class="ty">char</span>*&gt;(buffer.<span class="fn">data</span>()),
+    pulses_recvd * window_samps * <span class="kw">sizeof</span>(std::complex&lt;<span class="ty">int16_t</span>&gt;)
+);
+<span class="cmt">// Layout: [pulse0][pulse1]...[pulseN]
+// Each pulse = window_samps × complex&lt;int16_t&gt;</span></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="callout info">
+        <strong>Buffer size estimate</strong>
+        At default params: 2750 pulses/s × 25s × 900 samples × 4 bytes = <strong>~247 MB</strong>. Verify DietPi has enough free RAM before running full session.
+      </div>
+    </section>
+
+    <!-- GPIO -->
+    <section id="gpio">
+      <h2>Module</h2>
+      <h3>GPIO — ATR Hardware Mode</h3>
+      <p>FP0 pin 0 is driven by the B210 FPGA ATR (Automatic Transmit/Receive) state machine. The pin goes HIGH sample-accurately when a TX burst starts — no software jitter.</p>
+
+      <div class="code-block">
+        <div class="code-header">
+          <span class="code-filename">connect.cpp — GPIO setup</span>
+          <button class="copy-btn" onclick="copyCode(this)">copy</button>
+        </div>
+        <pre><span class="cmt">// pin 0 = ATR controlled, output</span>
+usrp-&gt;<span class="fn">set_gpio_attr</span>(<span class="str">"FP0"</span>, <span class="str">"CTRL"</span>,   <span class="num">0x0001</span>, <span class="num">0x0001</span>);
+usrp-&gt;<span class="fn">set_gpio_attr</span>(<span class="str">"FP0"</span>, <span class="str">"DDR"</span>,    <span class="num">0x0001</span>, <span class="num">0x0001</span>);
+usrp-&gt;<span class="fn">set_gpio_attr</span>(<span class="str">"FP0"</span>, <span class="str">"ATR_TX"</span>, <span class="num">0x0001</span>, <span class="num">0x0001</span>); <span class="cmt">// HIGH during TX</span>
+usrp-&gt;<span class="fn">set_gpio_attr</span>(<span class="str">"FP0"</span>, <span class="str">"ATR_0X"</span>, <span class="num">0x0000</span>, <span class="num">0x0001</span>); <span class="cmt">// LOW when idle</span></pre>
+      </div>
+
+      <div class="arch" style="font-size:0.7rem">
+        <div style="color:#8b949e;margin-bottom:0.5rem">ATR state machine</div>
+        <div class="arch-row">
+          <span class="arch-box" style="border-color:#8b949e;color:#8b949e">Idle</span>
+          <span class="arch-arrow">──▶</span>
+          <span class="arch-box" style="border-color:#8b949e;color:#8b949e">ATR_0X → pin LOW</span>
+        </div>
+        <div style="height:0.5rem"></div>
+        <div class="arch-row">
+          <span class="arch-box" style="border-color:#3fb950;color:#3fb950">TX burst</span>
+          <span class="arch-arrow">──▶</span>
+          <span class="arch-box" style="border-color:#3fb950;color:#3fb950">ATR_TX → pin HIGH ✓</span>
+        </div>
+        <div style="height:0.5rem"></div>
+        <div class="arch-row">
+          <span class="arch-box" style="border-color:#8b949e;color:#8b949e">RX only</span>
+          <span class="arch-arrow">──▶</span>
+          <span class="arch-box" style="border-color:#8b949e;color:#8b949e">ATR_RX → pin LOW (default)</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Timing -->
+    <section id="timing">
+      <h2>Timing</h2>
+      <h3>Pulse Timing Diagram</h3>
+
+      <div class="timing">
+        <svg viewBox="0 0 820 200" xmlns="http://www.w3.org/2000/svg" width="100%">
+          <!-- Labels -->
+          <text x="10" y="45"  font-size="11" fill="#8b949e">TX</text>
+          <text x="10" y="100" font-size="11" fill="#8b949e">GPIO</text>
+          <text x="10" y="155" font-size="11" fill="#8b949e">RX win</text>
+
+          <!-- PRI markers -->
+          <line x1="60"  y1="170" x2="60"  y2="180" stroke="#3d444d" stroke-width="1"/>
+          <line x1="260" y1="170" x2="260" y2="180" stroke="#3d444d" stroke-width="1"/>
+          <line x1="460" y1="170" x2="460" y2="180" stroke="#3d444d" stroke-width="1"/>
+          <line x1="660" y1="170" x2="660" y2="180" stroke="#3d444d" stroke-width="1"/>
+          <text x="145" y="192" font-size="9" fill="#8b949e" text-anchor="middle">PRI = 1/PRF</text>
+          <text x="345" y="192" font-size="9" fill="#8b949e" text-anchor="middle">PRI</text>
+          <text x="545" y="192" font-size="9" fill="#8b949e" text-anchor="middle">PRI</text>
+          <line x1="60" y1="176" x2="260" y2="176" stroke="#3d444d" stroke-width="1" marker-end="url(#arr)"/>
+          <defs>
+            <marker id="arr" markerWidth="6" markerHeight="6" refX="3" refY="3" orient="auto">
+              <path d="M0,0 L6,3 L0,6 Z" fill="#3d444d"/>
+            </marker>
+          </defs>
+
+          <!-- TX pulses -->
+          <rect x="60"  y="25" width="30" height="22" fill="#f78166" opacity="0.85" rx="1"/>
+          <rect x="260" y="25" width="30" height="22" fill="#f78166" opacity="0.85" rx="1"/>
+          <rect x="460" y="25" width="30" height="22" fill="#f78166" opacity="0.85" rx="1"/>
+          <rect x="660" y="25" width="30" height="22" fill="#f78166" opacity="0.85" rx="1"/>
+          <!-- TX baseline -->
+          <line x1="60"  y1="47" x2="260" y2="47" stroke="#3d444d" stroke-width="1"/>
+          <line x1="260" y1="47" x2="460" y2="47" stroke="#3d444d" stroke-width="1"/>
+          <line x1="460" y1="47" x2="660" y2="47" stroke="#3d444d" stroke-width="1"/>
+          <line x1="660" y1="47" x2="800" y2="47" stroke="#3d444d" stroke-width="1"/>
+
+          <!-- GPIO pulses -->
+          <rect x="60"  y="82" width="30" height="22" fill="#3fb950" opacity="0.85" rx="1"/>
+          <rect x="260" y="82" width="30" height="22" fill="#3fb950" opacity="0.85" rx="1"/>
+          <rect x="460" y="82" width="30" height="22" fill="#3fb950" opacity="0.85" rx="1"/>
+          <rect x="660" y="82" width="30" height="22" fill="#3fb950" opacity="0.85" rx="1"/>
+          <line x1="60"  y1="104" x2="260" y2="104" stroke="#3d444d" stroke-width="1"/>
+          <line x1="260" y1="104" x2="460" y2="104" stroke="#3d444d" stroke-width="1"/>
+          <line x1="460" y1="104" x2="660" y2="104" stroke="#3d444d" stroke-width="1"/>
+          <line x1="660" y1="104" x2="800" y2="104" stroke="#3d444d" stroke-width="1"/>
+
+          <!-- RX windows -->
+          <rect x="110" y="135" width="60" height="22" fill="#58a6ff" opacity="0.5" rx="1"/>
+          <rect x="310" y="135" width="60" height="22" fill="#58a6ff" opacity="0.5" rx="1"/>
+          <rect x="510" y="135" width="60" height="22" fill="#58a6ff" opacity="0.5" rx="1"/>
+          <rect x="710" y="135" width="60" height="22" fill="#58a6ff" opacity="0.5" rx="1"/>
+
+          <!-- t_min / t_max annotations -->
+          <line x1="90" y1="135" x2="110" y2="135" stroke="#d29922" stroke-width="1" stroke-dasharray="3,2"/>
+          <text x="93" y="131" font-size="8" fill="#d29922">t_min</text>
+          <line x1="90" y1="157" x2="170" y2="157" stroke="#d29922" stroke-width="1" stroke-dasharray="3,2"/>
+          <text x="143" y="153" font-size="8" fill="#d29922">t_max</text>
+        </svg>
+      </div>
+    </section>
+
+    <!-- Sync -->
+    <section id="sync">
+      <h2>Timing</h2>
+      <h3>TX / RX Synchronisation</h3>
+      <p><code style="color:#d2a8ff">t_start</code> is computed once in <code>connect.cpp</code> after zeroing the USRP clock, then passed by reference to both threads. Both threads index pulse <em>n</em> from the same origin.</p>
+
+      <div class="code-block">
+        <div class="code-header">
+          <span class="code-filename">connect.cpp — shared time reference</span>
+          <button class="copy-btn" onclick="copyCode(this)">copy</button>
+        </div>
+        <pre><span class="cmt">// Zero the USRP hardware clock</span>
+usrp-&gt;<span class="fn">set_time_now</span>(uhd::<span class="fn">time_spec_t</span>(<span class="num">0.0</span>));
+
+<span class="cmt">// Single t_start — both threads use this</span>
+uhd::time_spec_t t_start = usrp-&gt;<span class="fn">get_time_now</span>()
+                           + uhd::<span class="fn">time_spec_t</span>(cfg.start_offset_s);
+
+<span class="cmt">// TX: t_pulse[n] = t_start + n × PRI</span>
+<span class="cmt">// RX: t_rx[n]    = t_start + n × PRI + t_min_s</span></pre>
+      </div>
+
+      <div class="callout ok">
+        <strong>Result</strong>
+        RX window for pulse <em>n</em> is always <code>t_min_us</code>–<code>t_max_us</code> microseconds after the <em>n</em>th TX pulse, regardless of OS scheduling, thread wake-up latency, or USB transfer timing.
+      </div>
+    </section>
+
+    <!-- Deploy -->
+    <section id="deploy">
+      <h2>Deploy</h2>
+      <h3>Step-by-Step Deployment</h3>
+
+      <div class="progress-wrap">
+        <div class="progress-label">
+          <span>Deploy progress</span>
+          <span id="progress-pct">0 / 10</span>
+        </div>
+        <div class="progress-bar">
+          <div class="progress-fill" id="progress-fill" style="width:0%"></div>
+        </div>
+      </div>
+
+      <div class="timeline" id="deploy-timeline">
+
+        <div class="tl-item">
+          <div class="tl-line"></div>
+          <div class="tl-num" id="phase-num-1">1</div>
+          <div class="tl-content">
+            <div class="tl-title">Verify hardware</div>
+            <div class="tl-desc">Plug B210 into USB 3.0 (blue port). Run <code style="color:#58a6ff">uhd_usrp_probe</code> and confirm "Operating over USB 3" and correct FPGA/FW versions.</div>
+            <ul class="checklist" id="phase-1">
+              <li onclick="toggleCheck(this)"><span class="check"></span><span>B210 plugged into USB 3.0</span></li>
+              <li onclick="toggleCheck(this)"><span class="check"></span><span>uhd_usrp_probe detects device</span></li>
+              <li onclick="toggleCheck(this)"><span class="check"></span><span>"Operating over USB 3" confirmed</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="tl-item">
+          <div class="tl-line"></div>
+          <div class="tl-num" id="phase-num-2">2</div>
+          <div class="tl-content">
+            <div class="tl-title">Verify dependencies</div>
+            <div class="tl-desc">Check nlohmann-json and UHD headers are present.</div>
+            <ul class="checklist" id="phase-2">
+              <li onclick="toggleCheck(this)"><span class="check"></span><span><code style="color:#58a6ff">dpkg -l | grep nlohmann</code> returns a result</span></li>
+              <li onclick="toggleCheck(this)"><span class="check"></span><span><code style="color:#58a6ff">ls /usr/include/uhd</code> shows headers</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="tl-item">
+          <div class="tl-line"></div>
+          <div class="tl-num" id="phase-num-3">3</div>
+          <div class="tl-content">
+            <div class="tl-title">Compile probe-style connect.cpp</div>
+            <div class="tl-desc">Original connect/probe code only — confirms toolchain and USRP link before adding threads.</div>
+            <ul class="checklist" id="phase-3">
+              <li onclick="toggleCheck(this)"><span class="check"></span><span>make succeeds with no errors</span></li>
+              <li onclick="toggleCheck(this)"><span class="check"></span><span>./connect prints board info cleanly</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="tl-item">
+          <div class="tl-line"></div>
+          <div class="tl-num" id="phase-num-4">4</div>
+          <div class="tl-content">
+            <div class="tl-title">Add JSON config</div>
+            <div class="tl-desc">Add params.json and config.hpp. Run and confirm parameters print correctly. No RF.</div>
+            <ul class="checklist" id="phase-4">
+              <li onclick="toggleCheck(this)"><span class="check"></span><span>All 8 parameters print on startup</span></li>
+              <li onclick="toggleCheck(this)"><span class="check"></span><span>Invalid gain value throws error correctly</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="tl-item">
+          <div class="tl-line"></div>
+          <div class="tl-num" id="phase-num-5">5</div>
+          <div class="tl-content">
+            <div class="tl-title">Signal generation test</div>
+            <div class="tl-desc">Print SIGNAL_TX.size() and first/last sample. Confirm pulse length = FS × PULSE_DURATION.</div>
+            <ul class="checklist" id="phase-5">
+              <li onclick="toggleCheck(this)"><span class="check"></span><span>signal.cpp compiles</span></li>
+              <li onclick="toggleCheck(this)"><span class="check"></span><span>SIGNAL_TX.size() == expected sample count</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="tl-item">
+          <div class="tl-line"></div>
+          <div class="tl-num" id="phase-num-6">6</div>
+          <div class="tl-content">
+            <div class="tl-title">TX only — no antenna</div>
+            <div class="tl-desc">Run TX thread with SESSION_DURATION: 1.0. No antenna connected. Watch for [U] underruns.</div>
+            <ul class="checklist" id="phase-6">
+              <li onclick="toggleCheck(this)"><span class="check"></span><span>No UHD errors in output</span></li>
+              <li onclick="toggleCheck(this)"><span class="check"></span><span>Pulse count matches PRF × duration</span></li>
+              <li onclick="toggleCheck(this)"><span class="check"></span><span>No [U] underruns</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="tl-item">
+          <div class="tl-line"></div>
+          <div class="tl-num" id="phase-num-7">7</div>
+          <div class="tl-content">
+            <div class="tl-title">GPIO test</div>
+            <div class="tl-desc">Connect multimeter or scope to FP0 pin 0 and GND. Confirm pin goes HIGH during TX bursts.</div>
+            <ul class="checklist" id="phase-7">
+              <li onclick="toggleCheck(this)"><span class="check"></span><span>ATR GPIO config added to connect.cpp</span></li>
+              <li onclick="toggleCheck(this)"><span class="check"></span><span>Pin goes HIGH during TX, LOW when idle</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="tl-item">
+          <div class="tl-line"></div>
+          <div class="tl-num" id="phase-num-8">8</div>
+          <div class="tl-content">
+            <div class="tl-title">SMA loopback TX + RX</div>
+            <div class="tl-desc">SMA cable: TX/RX → RX2 port with <strong>30 dB attenuator</strong>. Run short session at low PRF.</div>
+            <ul class="checklist" id="phase-8">
+              <li onclick="toggleCheck(this)"><span class="check"></span><span>30 dB attenuator in line</span></li>
+              <li onclick="toggleCheck(this)"><span class="check"></span><span>rx_data_TIMESTAMP.bin created</span></li>
+              <li onclick="toggleCheck(this)"><span class="check"></span><span>File size matches expected bytes</span></li>
+              <li onclick="toggleCheck(this)"><span class="check"></span><span>No [O] overflows</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="tl-item">
+          <div class="tl-line"></div>
+          <div class="tl-num" id="phase-num-9">9</div>
+          <div class="tl-content">
+            <div class="tl-title">Validate data in Python</div>
+            <div class="tl-desc">Load .bin file, reshape, plot range-time intensity image.</div>
+            <ul class="checklist" id="phase-9">
+              <li onclick="toggleCheck(this)"><span class="check"></span><span>Data loads without error</span></li>
+              <li onclick="toggleCheck(this)"><span class="check"></span><span>TX pulse visible in range window</span></li>
+              <li onclick="toggleCheck(this)"><span class="check"></span><span>No NaN or zero-filled pulses</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="tl-item">
+          <div class="tl-num" id="phase-num-10">10</div>
+          <div class="tl-content">
+            <div class="tl-title">Full 25s session</div>
+            <div class="tl-desc">Restore SESSION_DURATION: 25.0 and PRF: 2750.0. Confirm buffer size, run, validate.</div>
+            <ul class="checklist" id="phase-10">
+              <li onclick="toggleCheck(this)"><span class="check"></span><span>Buffer size printed and RAM is sufficient</span></li>
+              <li onclick="toggleCheck(this)"><span class="check"></span><span>Full session completes without errors</span></li>
+              <li onclick="toggleCheck(this)"><span class="check"></span><span>ls -lh rx_data_*.bin shows correct file size</span></li>
+            </ul>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- Python -->
+    <section id="python">
+      <h2>Validation</h2>
+      <h3>Data Validation — Python</h3>
+      <div class="code-block">
+        <div class="code-header">
+          <span class="code-filename">validate.py</span>
+          <button class="copy-btn" onclick="copyCode(this)">copy</button>
+        </div>
+        <pre><span class="kw">import</span> numpy <span class="kw">as</span> np
+<span class="kw">import</span> matplotlib.pyplot <span class="kw">as</span> plt
+
+<span class="cmt"># Match your params.json values</span>
+PRF          = <span class="num">2750.0</span>
+FS           = <span class="num">10e6</span>
+SESSION_DUR  = <span class="num">25.0</span>
+T_MIN_US     = <span class="num">10.0</span>
+T_MAX_US     = <span class="num">100.0</span>
+
+total_pulses = <span class="ty">int</span>(PRF * SESSION_DUR)
+window_samps = <span class="ty">int</span>((T_MAX_US - T_MIN_US) * <span class="num">1e-6</span> * FS)
+
+<span class="cmt"># sc16 = interleaved int16 I/Q</span>
+raw  = np.<span class="fn">fromfile</span>(<span class="str">"rx_data_TIMESTAMP.bin"</span>, dtype=np.int16)
+IQ   = raw[<span class="num">0</span>::<span class="num">2</span>] + <span class="num">1j</span> * raw[<span class="num">1</span>::<span class="num">2</span>]
+data = IQ.<span class="fn">reshape</span>(total_pulses, window_samps)
+
+<span class="cmt"># Range-time intensity image</span>
+plt.<span class="fn">figure</span>(figsize=(<span class="num">12</span>, <span class="num">6</span>))
+plt.<span class="fn">imshow</span>(np.<span class="fn">abs</span>(data), aspect=<span class="str">'auto'</span>, origin=<span class="str">'lower'</span>,
+           extent=[T_MIN_US, T_MAX_US, <span class="num">0</span>, SESSION_DUR])
+plt.<span class="fn">colorbar</span>(label=<span class="str">'Amplitude'</span>)
+plt.<span class="fn">xlabel</span>(<span class="str">'Range time [µs]'</span>)
+plt.<span class="fn">ylabel</span>(<span class="str">'Slow time [s]'</span>)
+plt.<span class="fn">title</span>(<span class="str">'Range-Time Intensity'</span>)
+plt.<span class="fn">tight_layout</span>()
+plt.<span class="fn">show</span>()</pre>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script>
+  // ── Copy button ──
+  function copyCode(btn) {
+    const pre = btn.closest('.code-block').querySelector('pre');
+    navigator.clipboard.writeText(pre.innerText).then(() => {
+      btn.textContent = 'copied!';
+      btn.classList.add('copied');
+      setTimeout(() => { btn.textContent = 'copy'; btn.classList.remove('copied'); }, 1500);
+    });
+  }
+
+  // ── Tab switching ──
+  function switchTab(btn, paneId) {
+    const tabs = btn.closest('.tabs');
+    tabs.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    tabs.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById(paneId).classList.add('active');
+  }
+
+  // ── Nav active state ──
+  function setActive(el) {
+    document.querySelectorAll('nav a').forEach(a => a.classList.remove('active'));
+    el.classList.add('active');
+  }
+
+  // ── Checklist + progress ──
+  const TOTAL_PHASES = 10;
+
+  function toggleCheck(li) {
+    li.classList.toggle('done');
+    if (li.classList.contains('done'))
+      li.querySelector('.check').textContent = '✓';
+    else
+      li.querySelector('.check').textContent = '';
+    updateProgress();
+  }
+
+  function updateProgress() {
+    let done = 0;
+    for (let i = 1; i <= TOTAL_PHASES; i++) {
+      const phase = document.getElementById('phase-' + i);
+      const items = phase.querySelectorAll('li');
+      const doneItems = phase.querySelectorAll('li.done');
+      const num = document.getElementById('phase-num-' + i);
+      if (doneItems.length === items.length && items.length > 0) {
+        num.classList.add('done');
+        num.classList.remove('active');
+        num.textContent = '✓';
+        done++;
+      } else if (doneItems.length > 0) {
+        num.classList.add('active');
+        num.classList.remove('done');
+        num.textContent = i;
+      } else {
+        num.classList.remove('done', 'active');
+        num.textContent = i;
+      }
+    }
+    document.getElementById('progress-pct').textContent = done + ' / ' + TOTAL_PHASES;
+    document.getElementById('progress-fill').style.width = (done / TOTAL_PHASES * 100) + '%';
+  }
+
+  // ── Scroll spy ──
+  const sections = document.querySelectorAll('section[id]');
+  const navLinks = document.querySelectorAll('nav a');
+
+  window.addEventListener('scroll', () => {
+    let current = '';
+    sections.forEach(s => {
+      if (window.scrollY >= s.offsetTop - 120) current = s.id;
+    });
+    navLinks.forEach(a => {
+      a.classList.toggle('active', a.getAttribute('href') === '#' + current);
+    });
+  });
+</script>
+</body>
+</html>
