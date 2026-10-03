@@ -1,0 +1,90 @@
+syntax = "proto3";
+
+package rocsar;
+
+enum CommandType {
+  CMD_UNKNOWN = 0;
+  CMD_SET_TARGET = 1;
+  CMD_SET_BANDWIDTH = 2;
+  CMD_CONTROL_HEATER = 3;
+  CMD_TRIGGER_SAR = 4;
+  CMD_TRIGGER_CAMERA = 5;
+  CMD_JOG_SERVO = 6;
+}
+
+message SetTargetPayload {
+  float target_heading = 1;
+}
+
+message SetBandwidthPayload {
+  uint32 rate_kbps = 1;
+}
+
+message ControlHeaterPayload {
+  uint32 heater_id = 1;
+  bool enable = 2;
+}
+
+message TriggerCameraPayload {
+  uint32 count = 1;
+  float spacing_ms = 2;
+}
+
+message JogServoPayload {
+  uint32 servo_id = 1;
+  uint32 target_tick = 2;
+}
+
+message CommandRequest {
+  string command_id = 1;
+  CommandType type = 2;
+  oneof payload {
+    SetTargetPayload set_target = 3;
+    SetBandwidthPayload set_bandwidth = 4;
+    ControlHeaterPayload control_heater = 5;
+    TriggerCameraPayload trigger_camera = 6;
+    JogServoPayload jog_servo = 7;
+  }
+}
+
+message CommandResponse {
+  string command_id = 1;
+  bool success = 2;
+  string message = 3;
+}
+
+message ServoData {
+  uint32 id = 1;
+  uint32 current_tick = 2;
+  int32 current_speed = 3;
+  int32 current_load = 4;
+  float voltage_v = 5;
+  uint32 temperature_c = 6;
+  bool online = 7;
+}
+
+message GnssData {
+  double latitude = 1;
+  double longitude = 2;
+  float altitude = 3;
+  bool fix_ok = 4;
+}
+
+message SystemHealth {
+  float cpu_temp_c = 1;
+  uint64 uptime_seconds = 2;
+  bool limit_active = 3;
+  float disk_used_percent = 4;
+}
+
+message TelemetryFrame {
+  double timestamp = 1;
+  float gondola_heading = 2;
+  float target_heading = 3;
+  bool imu_online = 4;
+  repeated ServoData servos = 5;
+  bool heater1_active = 6;
+  bool heater2_active = 7;
+  GnssData gnss = 8;
+  SystemHealth health = 9;
+}

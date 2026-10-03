@@ -1,0 +1,72 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rocsar-obc"
+version = "0.1.0"
+description = "On-Board Computer (Raspberry Pi 4B) server for the ROCSAR platform"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Proprietary" }
+
+dependencies = [
+    "pyzmq>=25.0",
+    "protobuf>=4.25",
+    "pyserial>=3.5",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "mypy>=1.8",
+    "ruff>=0.5",
+    # Stubs do pyserial: sem eles o mypy trata a ligacao serial como `Any`
+    # e perde a verificacao de tipos de `serial.Serial`.
+    "types-pyserial>=3.5",
+]
+
+[project.scripts]
+rocsar-obc = "src.obc_server:main"
+
+[tool.setuptools]
+packages = ["src"]
+
+[tool.setuptools.package-data]
+src = ["rocsar_messages_pb2.py"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+# Codigo de terceiros que acompanha o repositorio: nao e nosso para reformatar.
+# `Read_uB` e C++; `sdr-ettus-b200mini` traz scripts Python do fornecedor do SDR.
+extend-exclude = ["Read_uB", "sdr-ettus-b200mini"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "C4"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/rocsar_messages_pb2.py" = ["ALL"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+no_implicit_optional = true
+strict_equality = true
+check_untyped_defs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+
+# O stub .pyi gerado por `scripts/build_proto.sh` da ao mypy os tipos reais do
+# contrato. Sem ele, `follow_imports = skip` trata o modulo como `Any`.
+[[tool.mypy.overrides]]
+module = ["src.rocsar_messages_pb2"]
+follow_imports = "skip"
+ignore_errors = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]
