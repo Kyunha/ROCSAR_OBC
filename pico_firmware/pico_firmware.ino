@@ -63,6 +63,15 @@ struct AntennaAxis {
 
     return (uint16_t)constrain(targetTick, 0, 4095);
   }
+
+  // Entra em modo manual: o servo ignora o alvo e vai para o tick pedido.
+  bool jogTo(uint16_t tick) {
+    tick = constrain(tick, 0, 4095);
+    manualTick = tick;
+    manualMode = true;
+    lastSentTick = 0xFFFF;   // forca envio imediato no proximo ciclo
+    return true;
+  }
 };
 
 // ============================================================================
@@ -137,6 +146,15 @@ bool readServoTelemetry(uint8_t id, ServoTelemetry &out) {
 // ============================================================================
 // PROCESSADOR DE COMANDOS ASCII (OBC -> PICO)
 // ============================================================================
+
+// Converte o prefixo textual de um servo ("1".."2") num indice do array.
+bool servoIndexFromToken(const String &token, uint8_t &out) {
+  int v = token.toInt();
+  if (v < 1 || v > NUM_ANTENNAS) return false;
+  out = (uint8_t)(v - 1);
+  return true;
+}
+
 void processCommand(String cmd) {
   cmd.trim();
   cmd.toUpperCase();
@@ -145,28 +163,64 @@ void processCommand(String cmd) {
   int spaceIndex = cmd.indexOf(' ');
   String action = (spaceIndex == -1) ? cmd : cmd.substring(0, spaceIndex);
   String args = (spaceIndex == -1) ? "" : cmd.substring(spaceIndex + 1);
+  args.trim();
 
   if (action == "TARGET") {
-    globalTargetHeading = args.toFloat();
+    float value = args.toFloat();
+    // isFinite() rejeita NaN (p.ex. "TARGET abc" -> 0.0 e "TARGET --" -> nan)
+    if (!isfinite(value)) {
+      Serial.println("ERR: TARGET_NOT_A_NUMBER");
+      return;
+    }
+    globalTargetHeading = fmodf(value, 360.0f);
+    if (globalTargetHeading < 0.0f) globalTargetHeading += 360.0f;
+    // Um novo alvo retoma sempre o controlo automatico.
     for (auto &a : antennas) a.manualMode = false;
     Serial.println("OK: TARGET_SET");
   } 
-  else if (action == "HEAT1") {
+  else if (action == "HEAT1" || action == "HEAT2") {
+    uint8_t pin = (action == "HEAT1") ? HEATER_1_PIN : HEATER_2_PIN;
     bool enable = (args == "1" || args == "ON");
-    digitalWrite(HEATER_1_PIN, enable ? HIGH : LOW);
-    Serial.println("OK: HEAT1");
+    digitalWrite(pin, enable ? HIGH : LOW);
+    Serial.println(action == "HEAT1" ? "OK: HEAT1" : "OK: HEAT2");
   } 
-  else if (action == "HEAT2") {
-    bool enable = (args == "1" || args == "ON");
-    digitalWrite(HEATER_2_PIN, enable ? HIGH : LOW);
-    Serial.println("OK: HEAT2");
-  } 
+  else if (action == "JOG") {
+    // Formato: JOG <servo_id> <target_tick>
+    int sep = args.indexOf(' ');
+    if (sep == -1) {
+      Serial.println("ERR: JOG_ARGS");
+      return;
+    }
+    uint8_t index;
+    if (!servoIndexFromToken(args.substring(0, sep), index)) {
+      Serial.println("ERR: JOG_BAD_SERVO");
+      return;
+    }
+    long tick = args.substring(sep + 1).toInt();
+    if (tick < 0 || tick > 4095) {
+      Serial.println("ERR: JOG_BAD_TICK");
+      return;
+    }
+    antennas[index].jogTo((uint16_t)tick);
+    Serial.println("OK: JOG");
+  }
   else if (action == "STATUS") {
-    // Formato de resposta em linha compacta ASCII para o servidor Python
-    Serial.printf("TELEM,%.2f,%.2f,%d,%d,%.1f,%d,%.1f,%d\n",
-                  filteredGondolaHeading, globalTargetHeading, imuOnline ? 1 : 0,
-                  antennas[0].telemetry.currentTick, antennas[0].telemetry.voltageV, antennas[0].telemetry.temperatureC,
-                  antennas[1].telemetry.voltageV, antennas[1].telemetry.temperatureC);
+    // TELEM v2 -- numero de campos variavel, logo pode acompanhar o numero de
+    // antenas sem alterar o protocolo.
+    //   TELEM,<heading>,<target>,<imu_ok>,<n>,(id,tick,spd,load,v,t,online) x n
+    Serial.printf("TELEM,%.2f,%.2f,%d,%d", filteredGondolaHeading, globalTargetHeading,
+                  imuOnline ? 1 : 0, (int)NUM_ANTENNAS);
+    for (uint8_t i = 0; i < NUM_ANTENNAS; i++) {
+      const ServoTelemetry &t = antennas[i].telemetry;
+      Serial.printf(",%d,%u,%d,%d,%.1f,%d,%d",
+                    (int)(i + 1), (unsigned)t.currentTick,
+                    (int)t.currentSpeed, (int)t.currentLoad,
+                    t.voltageV, (int)t.temperatureC, t.online ? 1 : 0);
+    }
+    Serial.println();
+  }
+  else {
+    Serial.println("ERR: UNKNOWN_CMD");
   }
 }
 

@@ -2,38 +2,47 @@
 
 let
   python = pkgs.python3.withPackages (ps: with ps; [
-    pip
-    setuptools
+    # Runtime do OBC -- tem de bater certo com as `dependencies` de
+    # pyproject.toml, para o que se instala no Pi e o que se develope aqui
+    # serem o mesmo software.
     pyserial
     pyzmq
     protobuf
 
-    # P5's ground-station GUI (groundstation/qt_app.py). This is a development
-    # dependency only: it is in pyproject's `gui` optional extra and is NOT in
-    # the declared runtime `dependencies`, because the GUI runs on a ground
-    # station and must never enter the Pi's installed footprint. Carrying it
-    # here means the widget layer is actually runnable and testable in the
-    # supported environment rather than written blind and verified somewhere
-    # else. Qt widgets do not need the display here -- the tests use the
-    # offscreen platform (see tests/conftest.py) -- but they do need the
-    # runtime libraries PySide6 pulls in, which nixpkgs resolves.
-    pyside6
+    # Build dos stubs protobuf (scripts/build_proto.sh) e empacotamento.
+    setuptools
+    pip
+
+    # Testes e verificacao estatica.
+    pytest
+    pytest-cov
+    mypy
+    ruff
+
+    # O OBC chama `tc` para limitar a banda e `tc` precisa de iproute2.
+    
   ]);
 in
 pkgs.mkShell {
   packages = [
     python
-    pkgs.mypy
-    pkgs.ruff
     pkgs.gcc
+    pkgs.protobuf
     pkgs.curl
     pkgs.util-linux
-    pkgs.protobuf
+    pkgs.git
   ];
 
   shellHook = ''
-    echo "Python development shell"
+    echo "ROCSAR OBC -- shell de desenvolvimento"
     python --version
     gcc --version | head -1
+    echo
+    echo "  testes     : pytest -q"
+    echo "  lint       : ruff check ."
+    echo "  tipos      : mypy src"
+    echo "  proto      : scripts/build_proto.sh"
+    echo "  servidor   : python3 -m src.obc_server"
+    echo "  simulador  : python3 tests/test_client_sim.py"
   '';
 }

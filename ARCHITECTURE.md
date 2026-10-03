@@ -1,107 +1,320 @@
 # Arquitetura do Sistema ROCSAR
 
-## 1. Visão Geral do Sistema
-O **ROCSAR** é um sistema embarcado de apontamento autónomo e compensação de movimento para antenas a bordo de uma plataforma aérea/gôndola. O objetivo principal é manter as antenas orientadas continuamente para uma direção alvo (*Target Heading*), compensando as rotações e turbulências da plataforma em tempo real.
+O **ROCSAR** e um sistema embarcado de apontamento autonomo e compensacao de
+movimento para antenas a bordo de uma plataforma aerea/gondola. O objetivo e
+manter as antenas orientadas continuamente para um alvo (*Target Heading*),
+compensando as rotacoes e a turbulencia da plataforma em tempo real.
+
+Este documento tem duas partes: os **requisitos** (o que o sistema tem de fazer)
+e as **decisoes de implementacao** (o porque de cada escolha). O `README.md`
+cobre o *como usar*.
 
 ---
 
-## 2. Requisitos do Sistema
+## 1. Visao geral
 
-### 2.1. Requisitos Funcionais (RF)
-* **RF01 - Apontamento Contínuo:** O sistema deve calcular a posição dos servos a 50 Hz para compensar a rotação da gôndola.
-* **RF02 - Receção de Comandos:** A Ground Station (GS) deve conseguir enviar novos alvos de orientação e ordens de controlo para a OBC.
-* **RF03 - Transmissão de Telemetria:** A OBC deve enviar dados do estado do sistema (posição das antenas, orientação da plataforma, temperaturas, voltagens e GNSS) para a GS em tempo real.
-* **RF04 - Leitura de Posição (BNO055):** A Raspberry Pi Pico deve ler a bússola/IMU via I2C para determinar a orientação atual.
-* **RF05 - Controlo de Servos ST3215:** A Pico deve acionar dois servos ST3215 acoplados a gearboxes de redução 5:1.
-* **RF06 - Módulos de Aquecimento:** O sistema deve permitir ligar/desligar dois aquecedores (GPIOs 4 e 5) para operação em baixas temperaturas.
-* **RF07 - Ingestão de Dados GNSS:** A OBC deve ler as coordenadas UBX de 3 receptores GNSS expostos em portas UDP locais e integrá-las na telemetria.
-* **RF08 - Gestão do SDR Ettus B210:** A OBC deve disparar e gerir a recolha de dados de Radar e guardar os resultados no SSD.
-* **RF09 - Download de Ficheiros:** O operador na GS deve poder transferir ficheiros de logs e dados do SSD via HTTP.
-
-### 2.2. Requisitos Não-Funcionais (RNF)
-* **RNF01 - Tempo Real e Determinismo:** O loop de controlo de apontamento na Pico deve correr rigorosamente a 50 Hz (período de 20 ms).
-* **RNF02 - Limitação Dinâmica de Largura de Banda:** A comunicação Ethernet entre a GS e a OBC deve ser passível de limitação de débito em tempo real usando ferramentas do SO (`tc`).
-* **RNF03 - Autonomia do Subsistema de Controlo:** Se a comunicação entre a OBC e a Pico falhar, a Pico deve continuar o loop de controlo autónomo usando a última direção recebida.
-* **RNF04 - Modularidade:** O código deve ser dividido em módulos independentes (comunicação, controlo, sensores e atuadores).
-
----
-
-## 3. Arquitetura de Hardware
-
-A infraestrutura física do ROCSAR está dividida em três níveis:
-
+```
 +-----------------------------------------------------------------------------------+
 |                               GROUND STATION (GS)                                 |
-|  - Laptop do Operador (GUI de monitorização e controlo)                           |
+|  - Envia CommandRequest (Protobuf) via ZMQ DEALER                                  |
+|  - Recebe TelemetryFrame (Protobuf) via ZMQ SUB                                    |
 +-----------------------------------------------------------------------------------+
-|
-Ethernet (Com limitação de banda)
-|
+                                    |
+                          Ethernet (Linux tc)
+                                    |
++-----------------------------------------------------------------------------------+
+|                       OBC (Raspberry Pi 4B) - SERVIDOR                            |
+|                                                                                   |
+|  +------------------------+  +------------------------+  +---------------------+  |
+|  | ZMQ ROUTER (Port 5555) |  | ZMQ PUB (Port 5556)    |  | HTTP (Port 8080)    |  |
+|  | (Descodifica Protobuf) |  | (Serializa Protobuf)   |  | (Download de SSD)   |  |
+|  +------------------------+  +------------------------+  +---------------------+  |
+|               |                          ^                          |             |
+|               +------------+-------------+                          |             |
+|                            |                                        v             |
+|             +------------------------------+              +------------------+    |
+|             | Thread Leitora UDP (GNSS)    |              | Armazenamento SSD|    |
+|             +------------------------------+              +------------------+    |
+|                            |                                                      |
+|             +------------------------------+                                      |
+|             | Processador SAR & Camera      |                                      |
+|             +------------------------------+                                      |
+|                            |                                                      |
+|               Serial USB (ASCII @ 115200)                                         |
++-----------------------------------------------------------------------------------+
+                                    |
++-----------------------------------------------------------------------------------+
+|                        RASPBERRY PI PICO (Firmware C++)                           |
+|  - Controlo a 50 Hz | BNO055 (IMU) | Servos ST3215 | Aquecedores GPIO 4/5          |
++-----------------------------------------------------------------------------------+
+```
+
+---
+
+## 2. Requisitos
+
+### 2.1. Funcionais (RF)
+
+- **RF01 - Apontamento Continuo:** calcular a posicao dos servos a 50 Hz para
+  compensar a rotacao da gondola.
+- **RF02 - Rececao de Comandos (Protobuf):** a GS envia novos alvos e ordens
+  codificados em Protocol Buffers via ZeroMQ.
+- **RF03 - Transmissao de Telemetria:** a OBC emite `TelemetryFrame` a 5 Hz com
+  orientacao, servos, GNSS, aquecedores e saude do sistema.
+- **RF04 - Leitura de Posicao (BNO055):** a Pico le a bussola/IMU por I2C.
+- **RF05 - Controlo de Servos ST3215:** dois servos acoplados a gearboxes 5:1.
+- **RF06 - Aquecimento:** ligar/desligar dois aquecedores (GPIO 4 e 5).
+- **RF07 - Ingestao GNSS:** a OBC le as coordenadas de receptores GNSS em portas
+  UDP locais e integra-as na telemetria.
+- **RF08 - SAR (Ettus B210):** disparar e gerir a aquisicao e guardar no SSD.
+- **RF09 - Download de Ficheiros:** a GS transfere ficheiros do SSD via HTTP.
+
+### 2.2. Nao-funcionais (RNF)
+
+- **RNF01 - Tempo Real:** o loop de controlo na Pico corre a 50 Hz (20 ms).
+- **RNF02 - Limitacao Dinamica de Banda:** via `tc`.
+- **RNF03 - Autonomia do Controlo:** se a ligacao OBC -> Pico falhar, a Pico
+  continua em modo autonomo na ultima direccao valida.
+- **RNF04 - Eficiencia de Rede:** mensagens binarias compactas via Protobuf v3.
+
+---
+
+## 3. Hardware
+
+```
 +-----------------------------------------------------------------------------------+
 |                             OBC (Raspberry Pi 4B)                                 |
 |  - SSD USB (Armazenamento de dados, logs e imagens)                               |
-|  - SDR Ettus B210 USB (Radar - Transmissão e Receção)                             |
-|  - Câmara USB (Fotos das antenas)                                                 |
-|  - 3x Receptores GNSS USB (Dados UBX a 57600 baud -> UDP local)                   |
-+-----------------------------------------------------------------------------------+
-|
-Cabo USB (Serial ASCII)
-|
-+-----------------------------------------------------------------------------------+
-|                           RASPBERRY PI PICO (Firmware)                            |
-|  - BNO055 (IMU/Bússola via I2C nos pinos SDA 16 / SCL 17)                          |
-|  - 2x Servos ST3215 (UART Half-Duplex via GPIO 0 e 1 + Circuito de Adaptação)     |
-|  - 2x Módulos de Aquecimento (GPIO 4 e GPIO 5)                                    |
+|  - SDR Ettus B210 USB (Modulo SAR)                                                |
+|  - Camera USB (Fotos das antenas)                                                 |
+|  - Receptores GNSS USB (Read_uB, UDP local 2000-2004)                             |
 +-----------------------------------------------------------------------------------+
 
+Cabo USB (Serial ASCII @ 115200)
+
++-----------------------------------------------------------------------------------+
+|                           RASPBERRY PI PICO (Firmware C++)                        |
+|  - BNO055 (IMU/Bussola via I2C nos pinos SDA 16 / SCL 17)                         |
+|  - 2x Servos ST3215 (UART Half-Duplex via GPIO 0 e 1 + Adaptacao)                |
+|  - 2x Modulos de Aquecimento (GPIO 4 e GPIO 5)                                   |
++-----------------------------------------------------------------------------------+
+```
 
 ---
 
-## 4. Arquitetura de Software e Comunicação
+## 4. Comunicacoes
 
-### 4.1. Comunicação Ground Station <-> OBC (Ethernet)
-1. **Comandos de Controlo (ZeroMQ ROUTER/DEALER - Porta 5555):**
-   * Canal bidirecional e assíncrono para o operador enviar ordens (ex: alterar alvo, ligar aquecedores, mudar limite de banda).
-   * Formato: JSON ou Protocol Buffers para máxima eficiência de transmissão.
-2. **Telemetria Downlink (ZeroMQ PUB/SUB - Porta 5556):**
-   * Canal de transmissão unidirrecional da OBC para a GS a uma taxa típica de 5 Hz.
-   * Publica pacotes contendo dados de orientação, estado dos servos, coordenadas GNSS e temperatura do processador.
-3. **Download de Ficheiros (Servidor HTTP Leve - Porta 8080):**
-   * Um servidor HTTP embutido em Python (`http.server`) expõe a diretoria de dados no SSD, permitindo descargas diretas via navegador ou `curl`.
+### 4.1. GS <-> OBC
 
-### 4.2. Controlo Dinâmico de Banda (Traffic Control)
-* A OBC utiliza a ferramenta `tc` (*Traffic Control*) do Linux para aplicar regras TBF (*Token Bucket Filter*) na interface Ethernet (`eth0`).
-* Permite alterar o limite de débito (ex: 115 kbps) em pleno voo via comando expedido pela Ground Station.
+| Direccao | Transporte | Porta | Conteudo |
+|---|---|---|---|
+| Comandos | ZMQ ROUTER/DEALER | 5555 | `CommandRequest` / `CommandResponse` |
+| Telemetria | ZMQ PUB/SUB | 5556 | `TelemetryFrame` a 5 Hz |
+| Ficheiros | HTTP | 8080 | listagem e download do SSD |
 
-### 4.3. Comunicação OBC <-> Raspberry Pi Pico (Serial USB)
-* **Baudrate:** 115200 bps.
-* **Formato:** Protocolo textual baseado em linhas ASCII.
-* **Comandos Principais enviados do OBC para a Pico:**
-  * `TARGET <graus>`: Define a nova direção absoluta no espaço.
-  * `HEAT1 <1|0>` / `HEAT2 <1|0>`: Liga ou desliga os módulos de aquecimento.
-  * `STATUS`: Solicita uma linha de telemetria atualizada.
+Comandos: `[b"", <CommandRequest>]`. Telemetria: `[b"TELEMETRY", <frame>]`.
+
+O primeiro frame e o topico, para que a GS possa subscrever so o que lhe
+interessa. Em ZMQ, `SUBSCRIBE` filtra por **prefixo de frame**; como o topico e
+um frame completo e a carga util vem a seguir, o filtro e exacto.
+
+### 4.2. OBC <-> Pico
+
+Serial ASCII a 115200, uma linha por mensagem, terminada em `\n`.
+
+| Para a Pico | Resposta |
+|---|---|
+| `TARGET <graus>` | `OK` |
+| `JOG <id> <tick>` | `OK` |
+| `HEAT1 <0\|1>` / `HEAT2 <0\|1>` | `OK` |
+| `STATUS` | `TELEM,...` |
+| `PING` | `PONG` |
+
+`JOG` e um acrescento nosso a `CMD_JOG_SERVO`: move um servo para um `tick` em
+modo manual, em ticks absolutos validos de `0..4095`. Sem ele, o RF de comando
+manual de servo nao tinha caminho.
+
+O `TELEM` v1 (posicao e temperatura, 9 campos) foi mantido por compatibilidade.
+O **TELEM v2** acrescenta os campos que a GS precisa: `IMU`, e por servo
+`id,tick,speed,load,voltage,temp,online`. O parser aceita os dois.
+
+```
+TELEM,<heading>,<target>,<imu_ok>,<n>,(id,tick,speed,load,voltage,temp,online)*n
+```
+
+O `online` por servo e o que permite ao operador distinguir "servo parado" de
+"servo desligado" -- sem isso, um servo que caiu do bus aparece como um servo
+saudavel a reportar zeros.
+
+### 4.3. GNSS
+
+Duas fontes, ambas em **modo escuta** (`bind` + `recvfrom`), nunca `connect`:
+e o OBC que e servido, nao o cliente. Um socket UDP ligado so recebe de quem
+ja estava a falar para ele -- e o erro classico que faz um feed "parecer morto".
+
+- **JSON** em `127.0.0.1:9000`, para depuracao e receptores sem o protocolo
+  Read_uB.
+- **Read_uB** em `127.0.0.1:2000` (primaria; `2001-2004` como redundancia).
+  `NavData` tem 420 bytes, `#pragma pack(1)`, little-endian:
+
+  | Campo | Offset | Tipo |
+  |---|---|---|
+  | `Latitude` | 24 | `double` |
+  | `Longitude` | 32 | `double` |
+  | `Altitude` | 40 | `float` |
+  | `flags` | 120 | `uint16` |
+  | `stage` | 122 | `uint16` |
+
+  `fix_ok = flags & 0x0001`.
+
+O registo no Read_uB e um datagrama de 2 bytes little-endian
+(`struct.pack("<H", 125)`), **renovado periodicamente**: o servidor poda
+registos expirados, e um registo unico que nao se renova deixa de receber
+silenciosamente. A renovacao e separada da recepcao, e um timeout de leitura
+**nao** significa registo perdido -- tratar isso como tal fazia a fonte
+desregistar-se sozinha e parar para sempre.
+
+### 4.4. Banda
+
+Filtro TBF em `eth0` via `tc`:
+
+```
+sudo tc qdisc del  dev eth0 root
+sudo tc qdisc add dev eth0 root tbf rate 512kbit burst 32kbit latency 400ms
+```
 
 ---
 
-## 5. Decisões de Design (Stack Tecnológica)
+## 5. Decisoes de design
 
-| Componente | Tecnologia Escolhida | Justificação |
+| Componente | Escolha | Justificacao |
 | :--- | :--- | :--- |
-| **Linguagem na Pico** | C++ (Arduino Framework / RP2040) | Garante execução determinística sem latências de garbage collector. |
-| **Linguagem na OBC** | Python 3 | Facilidade na integração de bibliotecas de rede, suporte ao SDR e suporte nativo a threads/subprocessos. |
-| **Rede (Comandos/Telemetria)** | ZeroMQ | Leve, de alta performance e sem os *overheads* de conexões HTTP convencionais. |
-| **Serialização de Dados** | Protobuf / JSON / ASCII | ASCII na ligação Serial para fácil depuração; JSON/Protobuf na rede para compactação de dados. |
-| **Gestão de Tráfego** | Linux `tc` | Método nativo do kernel Linux para controlo preciso e fiável de taxa de transferência na Ethernet. |
-| **Download de Ficheiros** | HTTP Leve | Simples, robusto e compatível com retoma e descarregamento via ferramentas padrão de mercado. |
+| **Pico** | C++ (Arduino / RP2040) | Determinismo no loop a 50 Hz. |
+| **OBC** | Python 3 | Integracao nativa com ZMQ, SDR, threads e comandos Linux. |
+| **Rede** | ZeroMQ (ROUTER/DEALER, PUB/SUB) | Baixa latencia, assincrono, sem broker. |
+| **Serializacao** | Protobuf v3 | Tamanho compacto na ligacao aerea. |
+| **Banda** | Linux `tc` | Limites em tempo real, ja no kernel. |
+| **Ficheiros** | `http.server` | Sem dependencias, integra-se em qualquer GS. |
+
+### 5.1. Por que Protobuf e nao JSON
+
+A ligacao aerea e cara (RF02/RNF04). `TelemetryFrame` a 5 Hz com dois servos e
+GNSS tem ~40 bytes em Protobuf contra ~200 em JSON -- a 5 Hz a diferenca e
+marginal, mas o `NavData` binario de 420 bytes *nao* tem equivalente JSON
+razoavel, e RF07 exige os receptores reais. Protobuf nos dois lados da ligacao
+serial e de rede, para que a GS e a OBC partilhem um unico ficheiro de contrato
+(`proto/rocsar_messages.proto`) em vez de duas convencoes que divergem.
+
+### 5.2. Por que ROUTER e nao REP
+
+`REP` exige alternancia estrita e state; `ROUTER` entrega a origem em cada
+frame, o que permite responder **a quem perguntou** mesmo com varios clientes
+ligados. Nao ha lock-in a um unico operador.
+
+### 5.3. Politica de mock: nada e simulado sem flag
+
+O default e hardware real. Simular por omissao e o modo mais facil de fazer
+voar um plataforma com telemetria fabricada, e `--auto-mock` existe como
+extensao **opt-in**, fora da letra da especificacao, precisamente por isso.
+
+A alternativa -- cair para mock quando o hardware falta -- e tentadora em
+desenvolvimento e perigosa em voo. Por isso existem tres modos distintos:
+
+- **real** (default);
+- **simulado**, so por flag explicita, com avisos grandes no log;
+- **degradado**, quando nao ha mock e o hardware falta: `online=False`,
+  `fix_ok=False`, mas o servidor arranca.
+
+O modo degradado e uma escolha, nao uma concessao: uma OBC que nao arranca nao
+telemetrizada e pior do que uma OBC que telemetriza a dizer que esta avariada.
+`--require-hardware` inverte a decisao e faz o servidor falhar em vez de
+degradar.
+
+### 5.4. Por que `tc` nunca levanta excecao
+
+`tc` falha por dezenas de razoes nao relacionadas com a logica -- `sudo` sem
+palavra-passe, `tc` ausente, interface errada, kernel sem suporte. Nenhuma
+justifica derrubar o servidor de telemetria. O `BandwidthManager` devolve
+sempre `(ok, mensagem)`, e o comando traduz para
+`CommandResponse(success=False)` com o erro real.
+
+Duas subtilezas que custaram bugs:
+
+- `tc qdisc del` sem regra devolve erro -- e **sucesso** para o OBC. A deteccao
+  tem de ser ancorada no texto exacto (`RTNETLINK answers: No such file or
+  directory`, `Cannot delete qdisc`): a mensagem de "executavel nao encontrado"
+  contem a mesma substring e seria lida como "ja nao havia regra", reportando
+  sucesso quando `tc` nao existe sequer.
+- `sudo` a pedir palavra-passe bloqueia. Daqui o timeout de 5 s por comando: um
+  `sudo` pendurado seria um OBC que deixa de responder.
+
+### 5.5. Por que um dispatcher para o SAR
+
+`CMD_TRIGGER_SAR` tem de apontar para *aquisicao real da missao*, que nao e
+conhecida a tempo de scripting. A cadeia e:
+
+```
+OBC --CMD_TRIGGER_SAR--> sar_runner --(delegacao)--> ./sdr-ettus-b200mini/run.sh
+```
+
+O dispatcher existe para que a missao substitua um comando sem tocar no OBC. E
+tem de recusar configuracoes que apontem para ele proprio -- seria recursao
+infinita, que nao se manifesta num erro mas num `fork`` sem limite a encher
+disco e memoria.
+
+### 5.6. Por que o GNSS valida o dado
+
+`NavData` nao tem magic nem versao: o unico sinal de formato valido e o
+**tamanho exacto** de 420 bytes. E ainda assim, um payload do tamanho certo
+pode estar corrompido ou em endianness errado, produzindo coordenadas absurdas
+mas "validas" para o tipo.
+
+Publicar `(lat=90.0, lon=1e300)` e pior do que nao publicar nada: a GS nao tem
+como distinguir de um erro real. Por isso o parser tambem rejeita valores nao
+finitos e coordenadas fora de range. Um fix que se considera perdido apos
+`--gnss-stale-s` sem actualizacao e marcado `fix_ok=False`, mesmo que o ultimo
+valor recebido fosse valido -- um fix antigo e pior do que nenhum.
 
 ---
 
-## 6. Tolerância a Falhas e Segurança (*Fail-safe*)
+## 6. Tolerancia a falhas
 
-1. **Perda de Comunicação GS <-> OBC:**
-   * A OBC continua a registar dados no SSD e a executar as tarefas agendadas autonomamente.
-2. **Perda de Comunicação OBC <-> Pico:**
-   * A Pico **não bloqueia**. Ela mantém o seu loop de controlo autónomo a 50 Hz, orientando as antenas para a última direção válida (`globalTargetHeading`) com base nas leituras da sua própria IMU (BNO055).
-3. **Filtragem de Dados e Suavização:**
-   * A orientação lida da BNO055 passa por um filtro de média móvel exponencial (EMA) para eliminar ruído.
-   * Aplica-se uma zona morta (*deadband*) nos servos para evitar desgaste mecânico desnecessário com microajustes inferiores a ~0.17°.
+| Falha | Comportamento |
+|---|---|
+| **Rede GS <-> OBC** | a OBC continua a gravar no SSD de forma autonoma |
+| **OBC -> Pico** | a Pico mantem o loop autonomo na ultima direccao valida (RNF03) |
+| **Pico ausente** | modo degradado, `online=False`, servidor arrancado |
+| **GNSS mudo** | `fix_ok=False` apos `--gnss-stale-s`; o resto da telemetria continua |
+| **`tc` indisponivel** | `CommandResponse(success=False)` com a razao; sem impacto na telemetria |
+| **Sem permissao no SSD** | fallback para `./data` com aviso explicito no log |
+| **Processo SAR a correr** | novo disparo recusado, com o pid actual na mensagem |
+
+Em todos os casos o principio e o mesmo: **degradar e avisar, nunca cair**. A
+unica excepcao deliberada e `--require-hardware`, que existe para quem prefere
+falhar cedo.
+
+### 6.1. Slow-joiner do PUB/SUB
+
+Quem subscreve o `PUB` recebe em fila as mensagens publicadas antes de a
+subscricao propagar pela rede. A consequencia pratica: os primeiros frames
+chegam ao mesmo tempo, e medir a taxa sem os descartar da valores errados --
+tipicamente 10x a taxa real, seguida de um silencio.
+
+`tests/test_client_sim.py` descarta `SLOW_JOINER_FRAMES` frames antes de medir,
+e mede jitter. Este e um protocolo de medicao, nao do software: se a GS deixar de
+o fazer, vai reportar picos de telemetria que nao existem.
+
+---
+
+## 7. O que nao esta coberto por testes
+
+Sao limites do ambiente, e vale a pena saber o que **nao** foi verificado:
+
+- Pico de hardware real (serial, servos, IMU, aquecedores).
+- Receptores Read_uB reais: registo UDP e renovacao.
+- `sudo tc` sem palavra-passe configurada.
+- `/mnt/ssd` montado num Pi com o SSD real.
+
+Os testes cobrem a logica, o framing e o parsing com injectando doubles e
+servidores falsos; a integracao fisica assume-se correcta ate prova em contrario
+em voo.
